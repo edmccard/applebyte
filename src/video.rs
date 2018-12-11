@@ -42,45 +42,51 @@ impl ScrPos {
     }
 
     fn display_addr_lores(self, page: Page) -> Addr {
-        // region 0,1,2,3 = top, middle, bottom, vblank
-        let region = self.line >> 6;
-
-        // row groups 8 scanlines into one row
+        // 8 scanlines are grouped into one row.
         let row = self.line >> 3;
 
-        // Horizontal scanning wraps at 128-byte boundaries ("& 0x7f")
-        let base = ((region << 5) + (region << 3) + (self.col - 25)) & 0x7f;
-        let offset = (row & 7) << 7;
+        // Screen memory is divided into 8 128-byte blocks.
+        let base = (row & 7) << 7;
+
+        // Each 128 byte block is divided into top 40, middle 40,
+        // bottom 40, unused 8.
+        let region = (self.line >> 6) * 40;
+
+        // Horizontal scanning wraps at 128-byte boundaries.
+        let offset = (region + (self.col - 25)) & 0x7f;
+
         (MachineInt(0x0400u16) << (page as u32)) | (base + offset)
     }
 
     fn display_addr_hires(self, page: Page) -> Addr {
-        // region 0,1,2,3 = top, middle, bottom, vblank
-        let region = self.line >> 6;
+        // Screen memory is divided into 8 1-kb blocks.
+        let blk_1k = (self.line & 7) << 10;
 
-        // block divides each 64-line region into blocks of 8 lines
-        let block = (self.line & 63) >> 3;
+        // Each 1k block is divided into 8 128-byte blocks.
+        let blk_128 = ((self.line & 63) >> 3) << 7;
 
-        // Horizontal scanning wraps at 128-byte boundaries ("& 0x7f")
-        let base = ((region << 5) + (region << 3) + (self.col - 25)) & 0x7f;
-        let offset = (block << 7) + ((self.line & 7) << 10);
+        // Each 128 byte block is divided into top 40, middle 40,
+        // bottom 40, unused 8.
+        let region = (self.line >> 6) * 40;
 
-        (MachineInt(0x2000u16) << (page as u32)) | (base + offset)
+        // Horizontal scanning wraps at 128-byte boundaries.
+        let offset = (region + (self.col - 25)) & 0x7f;
+
+        (MachineInt(0x2000u16) << (page as u32)) | (blk_1k + blk_128 + offset)
     }
-}
 
-#[cfg(test)]
-mod test {
-    use super::{Page, ScrPos};
-    use machine_int::MachineInt;
-    #[test]
-    fn hires_base() {
-        for x in 0..262 {
-            let pos = ScrPos {
-                line: MachineInt(x),
-                col: MachineInt(25),
-            };
-            println!("{}: {:04x}", x, pos.addr_hires(Page::One));
-        }
+    pub fn scanline_lores(addr: Addr) -> Addr {
+        let addr = addr & 0x3ff;
+        let row = addr >> 7;
+        let region = (addr & 127) / 40;
+        ((region << 3) + row) << 3
+    }
+
+    pub fn scanline_hires(addr: Addr) -> Addr {
+        let addr = addr & 0x1fff;
+        let blk_1k = addr >> 10;
+        let blk_128 = (addr & 0x3ff) >> 7;
+        let region = (addr & 127) / 40;
+        (region << 6) + (blk_128 << 3) + blk_1k
     }
 }
