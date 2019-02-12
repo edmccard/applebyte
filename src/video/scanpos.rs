@@ -1,18 +1,19 @@
 use crate::video::{Addr, Page};
+use crate::Model;
 use machine_int::MachineInt;
 
-#[derive(Copy, Clone)]
-pub struct ScanPos {
-    line: Addr,
-    col: Addr,
+#[derive(Copy, Clone, Debug)]
+pub(super) struct ScanPos {
+    pub(super) line: Addr,
+    pub(super) col: Addr,
 }
 
 impl ScanPos {
     /// The memory address scanned in LORES/TEXT mode for this scan
     /// position.
-    pub fn addr_lores(self, page: Page, ii: bool) -> Addr {
+    pub fn addr_lores(self, page: Page, model: Model) -> Addr {
         let addr = self.uniq_pos().display_addr_lores(page);
-        if ii && self.col < 25 {
+        if model < Model::IIe && self.col < 25 {
             addr | 0x1000
         } else {
             addr
@@ -89,7 +90,7 @@ impl ScanPos {
 }
 
 #[cfg(test)]
-mod test {
+mod test_scanpos {
     use super::*;
 
     #[test]
@@ -97,8 +98,8 @@ mod test {
         let counters = counters();
         let posns = posns();
         for i in 0..17030 {
-            let expected = addr_lores(counters[i], Page::One, false);
-            let got = posns[i].addr_lores(Page::One, false);
+            let expected = addr_lores(counters[i], Page::One, Model::IIe);
+            let got = posns[i].addr_lores(Page::One, Model::IIe);
             assert_eq!(
                 expected, got.0,
                 "expected {:04x}, got {:04x} for {}.{}",
@@ -133,9 +134,9 @@ mod test {
         a9a8a7 | a6a5a4a3 | a2a1a0
     }
 
-    fn addr_lores(counter: (u16, u16), page: Page, ii: bool) -> u16 {
+    fn addr_lores(counter: (u16, u16), page: Page, model: Model) -> u16 {
         let addr = addr_base(counter) | (0x400 << (page as u32));
-        if ii && (counter.1 < 0b1011000) {
+        if model < Model::IIe && (counter.1 < 0b1011000) {
             addr | 0x1000
         } else {
             addr
@@ -182,5 +183,100 @@ mod test {
             }
         }
         posns
+    }
+}
+
+pub(super) struct DrawIter {
+    start: ScanPos,
+    end: ScanPos,
+}
+
+impl DrawIter {
+    // Assumes start.line <= end.line
+    pub(super) fn new(start: ScanPos, end: ScanPos) -> DrawIter {
+        let start = ScanPos {
+            line: start.line,
+            col: std::cmp::max(start.col, MachineInt(25)),
+        };
+        let end = if end.line < 192 {
+            ScanPos {
+                line: end.line,
+                col: if end.col < 25 { MachineInt(0) } else { end.col },
+            }
+        } else {
+            ScanPos {
+                line: MachineInt(192),
+                col: MachineInt(0),
+            }
+        };
+        DrawIter { start, end }
+    }
+}
+
+impl Iterator for DrawIter {
+    type Item = (Addr, Addr, Addr);
+
+    fn next(&mut self) -> Option<(Addr, Addr, Addr)> {
+        if self.start.line < self.end.line {
+            let result = (self.start.line, self.start.col, MachineInt(65));
+            self.start.line += 1;
+            self.start.col = MachineInt(25);
+            Some(result)
+        } else if self.start.line > self.end.line
+            || self.start.col >= self.end.col
+        {
+            None
+        } else {
+            // start.line == end.line
+            let result = (self.start.line, self.start.col, self.end.col);
+            self.start.line += 1;
+            Some(result)
+        }
+    }
+}
+
+#[cfg(test)]
+mod test_drawiter {
+    use super::*;
+
+    #[test]
+    fn blank() {
+        assert!(lines(new_pos(0, 0), new_pos(0, 25)).is_empty());
+        assert!(lines(new_pos(0, 25), new_pos(0, 24)).is_empty());
+        assert!(lines(new_pos(1, 25), new_pos(0, 26)).is_empty());
+        assert!(lines(new_pos(192, 25), new_pos(193, 25)).is_empty());
+    }
+
+    #[test]
+    fn non_blank() {
+        let draw_lines = lines(new_pos(0, 0), new_pos(0, 26));
+        assert_eq!(draw_lines.len(), 1);
+        assert!(draw_lines.iter().all(visible));
+
+        let draw_lines = lines(new_pos(0, 25), new_pos(1, 0));
+        assert_eq!(draw_lines.len(), 1);
+        assert!(draw_lines.iter().all(visible));
+
+        let draw_lines = lines(new_pos(0, 0), new_pos(262, 0));
+        assert_eq!(draw_lines.len(), 192);
+        assert!(draw_lines.iter().all(visible));
+    }
+
+    fn new_pos(line: u16, col: u16) -> ScanPos {
+        ScanPos {
+            line: MachineInt(line),
+            col: MachineInt(col),
+        }
+    }
+
+    fn lines(start: ScanPos, end: ScanPos) -> Vec<(Addr, Addr, Addr)> {
+        let iter = DrawIter::new(start, end);
+        iter.collect()
+    }
+
+    fn visible(draw_line: &(Addr, Addr, Addr)) -> bool {
+        draw_line.0 < 192
+            && (draw_line.1 >= 25 && draw_line.1 <= 65)
+            && (draw_line.2 >= 25 && draw_line.2 <= 65)
     }
 }
