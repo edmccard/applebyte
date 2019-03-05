@@ -1,6 +1,7 @@
 use machine_int::MachineInt;
 
 mod scanpos;
+mod signal;
 
 use self::scanpos::ScanPos;
 
@@ -62,12 +63,20 @@ impl Video {
                     // end of frame
                 }
             }
+            // TODO: signal.start_scanline(self.pos.line, is_80)
         }
     }
+
+    // fn draw() {
+        // feed last_scanned to signal gen
+        // for foo in drawiter
+        //    feed range to signal gen
+        // figure out last_scanned (maybe None) and prev_bit
+    // }
 
     // tick vs. memory access: what order?
     //  pre-tick: -- anything that can interrupt goes here
     //  mem access
     //  post-tick:
-    fn draw_hires(delayed: u8, start: ScanPos, end: ScanPos) {}
+
 }
